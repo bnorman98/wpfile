@@ -1,0 +1,246 @@
+description: 'HOT template to create a new neutron network plus a router to the public
+  network, and for deploying two servers into the new network. The template also assigns
+  floating IP addresses to each server so they are routable from the public network.
+
+  '
+heat_template_version: '2013-05-23'
+parameters:
+  db_name:
+    constraints:
+    - description: db_name must be between 1 and 64 characters
+      length: {max: 64, min: 1}
+    - {allowed_pattern: '[a-zA-Z][a-zA-Z0-9]*', description: 'db_name must begin with
+        a letter and contain only alphanumeric characters
+
+        '}
+    default: wordpress
+    description: WordPress database name
+    type: string
+  db_password:
+    constraints:
+    - description: db_password must be between 1 and 41 characters
+      length: {max: 41, min: 1}
+    - {allowed_pattern: '[a-zA-Z0-9]*', description: db_password must contain only
+        alphanumeric characters}
+    default: admin
+    description: The WordPress database admin account password
+    hidden: true
+    type: string
+  db_root_password:
+    constraints:
+    - description: db_root_password must be between 1 and 41 characters
+      length: {max: 41, min: 1}
+    - {allowed_pattern: '[a-zA-Z0-9]*', description: db_root_password must contain
+        only alphanumeric characters}
+    default: admin
+    description: Root password for MySQL
+    hidden: true
+    type: string
+  db_username:
+    constraints:
+    - description: db_username must be between 1 and 16 characters
+      length: {max: 16, min: 1}
+    - {allowed_pattern: '[a-zA-Z][a-zA-Z0-9]*', description: 'db_username must begin
+        with a letter and contain only alphanumeric characters
+
+        '}
+    default: admin
+    description: The WordPress database admin account username
+    hidden: true
+    type: string
+  flavor: {default: m1.small, description: Flavor to use for servers, type: string}
+  image: {default: fedora-20.x86_64, description: Name of image to use for servers,
+    type: string}
+  key_name: {description: Name of keypair to assign to servers, type: string}
+  private_net_cidr: {description: Private network address (CIDR notation), type: string}
+  private_net_gateway: {description: Private network gateway address, type: string}
+  private_net_name: {description: Name of private network to be created, type: string}
+  private_net_pool_end: {description: End of private network IP address allocation
+      pool, type: string}
+  private_net_pool_start: {description: Start of private network IP address allocation
+      pool, type: string}
+  public_net: {description: 'ID or name of public network for which floating IP addresses
+      will be allocated
+
+      ', type: string}
+resources:
+  DatabaseServer:
+    properties:
+      flavor: {get_param: flavor}
+      image: {get_param: image}
+      key_name: {get_param: key_name}
+      networks:
+      - port: {get_resource: db_server_port}
+      user_data:
+        str_replace:
+          params:
+            db_name: {get_param: db_name}
+            db_password: {get_param: db_password}
+            db_rootpassword: {get_param: db_root_password}
+            db_user: {get_param: db_username}
+          template: '#!/bin/bash -v
+
+
+            sed -i "s/metalink=https/metalink=http/" /etc/yum.repos.d/*
+
+            yum -y install mariadb mariadb-server
+
+            touch /var/log/mariadb/mariadb.log
+
+            chown mysql.mysql /var/log/mariadb/mariadb.log
+
+            systemctl start mariadb.service
+
+
+            # Setup MySQL root password and create a user
+
+            mysqladmin -u root password db_rootpassword
+
+            cat << EOF | mysql -u root --password=db_rootpassword
+
+            CREATE DATABASE db_name;
+
+            GRANT ALL PRIVILEGES ON db_name.* TO "db_user"@"%"
+
+            IDENTIFIED BY "db_password";
+
+            FLUSH PRIVILEGES;
+
+            EXIT
+
+            EOF
+
+            '
+    type: OS::Nova::Server
+  WebServer:
+    properties:
+      flavor: {get_param: flavor}
+      image: {get_param: image}
+      key_name: {get_param: key_name}
+      networks:
+      - port: {get_resource: web_server_port}
+      user_data:
+        str_replace:
+          params:
+            db_ipaddr:
+              get_attr:
+              - DatabaseServer
+              - networks
+              - {get_param: private_net_name}
+              - 0
+            db_name: {get_param: db_name}
+            db_password: {get_param: db_password}
+            db_rootpassword: {get_param: db_root_password}
+            db_user: {get_param: db_username}
+          template: '#!/bin/bash -v
+
+
+            sed -i "s/metalink=https/metalink=http/" /etc/yum.repos.d/*
+
+            yum -y install httpd wordpress
+
+
+            sed -i "/Deny from All/d" /etc/httpd/conf.d/wordpress.conf
+
+            sed -i "s/Require local/Require all granted/" /etc/httpd/conf.d/wordpress.conf
+
+            sed -i s/database_name_here/db_name/ /etc/wordpress/wp-config.php
+
+            sed -i s/username_here/db_user/      /etc/wordpress/wp-config.php
+
+            sed -i s/password_here/db_password/  /etc/wordpress/wp-config.php
+
+            sed -i s/localhost/db_ipaddr/        /etc/wordpress/wp-config.php
+
+            setenforce 0 # Otherwise net traffic with DB is disabled
+
+
+            systemctl start httpd.service
+
+            '
+    type: OS::Nova::Server
+  db_server_port:
+    properties:
+      fixed_ips:
+      - subnet_id: {get_resource: private_subnet}
+      network_id: {get_resource: private_net}
+      security_groups:
+      - {get_resource: webserver_security_group}
+    type: OS::Neutron::Port
+  dbserver_security_group:
+    properties:
+      description: Add security group rules for server
+      name: dbserver_security_group
+      rules:
+      - port_range_max: 3306
+        port_range_min: 3306
+        protocol: tcp
+        remote_ip_prefix: {get_param: private_net_cidr}
+      - port_range_max: 22
+        port_range_min: 22
+        protocol: tcp
+        remote_ip_prefix: {get_param: private_net_cidr}
+      - protocol: icmp
+        remote_ip_prefix: {get_param: private_net_cidr}
+    type: OS::Neutron::SecurityGroup
+  private_net:
+    properties:
+      name: {get_param: private_net_name}
+    type: OS::Neutron::Net
+  private_subnet:
+    properties:
+      allocation_pools:
+      - end: {get_param: private_net_pool_end}
+        start: {get_param: private_net_pool_start}
+      cidr: {get_param: private_net_cidr}
+      dns_nameservers: [8.8.8.8]
+      gateway_ip: {get_param: private_net_gateway}
+      network_id: {get_resource: private_net}
+    type: OS::Neutron::Subnet
+  router:
+    properties:
+      external_gateway_info:
+        network: {get_param: public_net}
+    type: OS::Neutron::Router
+  router_interface:
+    properties:
+      router_id: {get_resource: router}
+      subnet_id: {get_resource: private_subnet}
+    type: OS::Neutron::RouterInterface
+  web_server_floating_ip:
+    properties:
+      floating_network: {get_param: public_net}
+      port_id: {get_resource: web_server_port}
+    type: OS::Neutron::FloatingIP
+  web_server_port:
+    properties:
+      fixed_ips:
+      - subnet_id: {get_resource: private_subnet}
+      network_id: {get_resource: private_net}
+      security_groups:
+      - {get_resource: webserver_security_group}
+    type: OS::Neutron::Port
+  webserver_security_group:
+    properties:
+      description: Add security group rules for server
+      name: webserver_security_group
+      rules:
+      - {port_range_max: 22, port_range_min: 22, protocol: tcp, remote_ip_prefix: 0.0.0.0/0}
+      - {protocol: icmp, remote_ip_prefix: 0.0.0.0/0}
+      - {port_range_max: 80, port_range_min: 80, protocol: tcp, remote_ip_prefix: 0.0.0.0/0}
+      - protocol: tcp
+        remote_ip_prefix: {get_param: private_net_cidr}
+    type: OS::Neutron::SecurityGroup
+outputs:
+  db_server_private_ip:
+    description: IP address of DB server in private network
+    value:
+      get_attr: [DatabaseServer, first_address]
+  web_server_private_ip:
+    description: IP address of web server in private network
+    value:
+      get_attr: [WebServer, first_address]
+  web_server_public_ip:
+    description: Floating IP address of web server
+    value:
+      get_attr: [web_server_floating_ip, floating_ip_address]
