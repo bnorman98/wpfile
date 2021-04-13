@@ -52,14 +52,14 @@ parameters:
   image: {default: fedora-20.x86_64, description: Name of image to use for servers,
     type: string}
   key_name: {description: Name of keypair to assign to servers, type: string}
-  private_net_cidr: {description: Private network address (CIDR notation), type: string}
-  private_net_gateway: {description: Private network gateway address, type: string}
-  private_net_name: {description: Name of private network to be created, type: string}
-  private_net_pool_end: {description: End of private network IP address allocation
+  private_net_cidr: {default: 10.0.0.0/24, description: Private network address (CIDR notation), type: string}
+  private_net_gateway: {default: 10.0.0.1, description: Private network gateway address, type: string}
+  private_net_name: {default: priv_net, description: Name of private network to be created, type: string}
+  private_net_pool_start: {default: 10.0.0.100, description: Start of private network IP address allocation
       pool, type: string}
-  private_net_pool_start: {description: Start of private network IP address allocation
+  private_net_pool_end: {default: 10.0.0.150, description: End of private network IP address allocation
       pool, type: string}
-  public_net: {description: 'ID or name of public network for which floating IP addresses
+  public_net: {default: ext-net, description: 'ID or name of public network for which floating IP addresses
       will be allocated
 
       ', type: string}
