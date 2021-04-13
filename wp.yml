@@ -200,7 +200,7 @@ resources:
   router:
     properties:
       external_gateway_info:
-        network: {get_param: public_net}
+        network: ext-net
     type: OS::Neutron::Router
   router_interface:
     properties:
@@ -209,7 +209,7 @@ resources:
     type: OS::Neutron::RouterInterface
   web_server_floating_ip:
     properties:
-      floating_network: {get_param: public_net}
+      floating_network: ext-net
       port_id: {get_resource: web_server_port}
     type: OS::Neutron::FloatingIP
   web_server_port:
